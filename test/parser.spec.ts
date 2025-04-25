@@ -1,13 +1,16 @@
 import * as slack from '../src/slack';
 import {parseBlocks} from '../src/parser/internal';
 import {marked} from 'marked';
+import {markdownToBlocks} from '../src/index';
+import {KnownBlock} from '@slack/types';
+import assert from 'assert';
 
 describe('parser', () => {
   it('should parse basic markdown', () => {
     const tokens = marked.lexer('**a ~b~** c[*d*](https://example.com)');
     const actual = parseBlocks(tokens);
 
-    const expected = [slack.section('*a ~b~* c<https://example.com|_d_> ')];
+    const expected = slack.section('*a ~b~* c<https://example.com|_d_>');
 
     expect(actual).toStrictEqual(expected);
   });
@@ -48,9 +51,32 @@ describe('parser', () => {
     const actual = parseBlocks(tokens);
 
     const expected = [
-      slack.section('1. a\n2. b'),
-      slack.section('• c\n• d'),
-      slack.section('• e\n• f'),
+      slack.richText([
+        slack.richTextList(
+          [
+            slack.richTextSection([{type: 'text', text: 'a'}]),
+            slack.richTextSection([{type: 'text', text: 'b'}]),
+          ],
+          'ordered',
+          0
+        ),
+        slack.richTextList(
+          [
+            slack.richTextSection([{type: 'text', text: 'c'}]),
+            slack.richTextSection([{type: 'text', text: 'd'}]),
+          ],
+          'bullet',
+          0
+        ),
+        slack.richTextList(
+          [
+            slack.richTextSection([{type: 'text', text: 'e'}]),
+            slack.richTextSection([{type: 'text', text: 'f'}]),
+          ],
+          'bullet',
+          0
+        ),
+      ]),
     ];
 
     expect(actual).toStrictEqual(expected);
@@ -71,13 +97,9 @@ describe('parser', () => {
 
 it('should truncate basic markdown', () => {
   const a4000 = new Array(4000).fill('a').join('');
-  const a3000 = new Array(3000).fill('a').join('');
-
   const tokens = marked.lexer(a4000);
   const actual = parseBlocks(tokens);
-
-  const expected = [slack.section(a3000)];
-
+  const expected = slack.section(a4000);
   expect(actual.length).toStrictEqual(expected.length);
 });
 
@@ -103,4 +125,349 @@ it('should truncate image title', () => {
   const expected = [slack.image('url', a2000)];
 
   expect(actual.length).toStrictEqual(expected.length);
+});
+
+describe('rich text lists', () => {
+  it('another test case', async () => {
+    const markdown = `
+Realm has raised a Pre-Seed round of almost €1.7M from the following investors [z8-0]:
+
+*   Lifeline Ventures [z8-1]
+*   Illusian, an angel collective composed of [z8-1]:
+    *   Ilkka Paananen, Co-founder & CEO of Supercell [z8-1]
+    *   Miki Kuusi, Co-founder & CEO of Wolt [z8-1]
+    *   Robert Gentz, Co-founder & Co-CEO of Zalando [z8-1]
+    *   Eléonore Crespo, Co-founder & CEO of Pigment [z8-1]
+    *   Oskari Saarenmaa, Co-founder & CEO of Aiven [z8-1]
+    *   Kristo Ovaska, Founder and ex-CEO of Smartly [z8-1]
+    *   Anssi Rusi, Co-CEO of Supermetrics, ex-Founding COO of Smartly [z8-1]
+    *   Marianne Vikkula, COO of Wolt [z8-1]
+    *   Riku Mäkelä, COO, International at DoorDash [z8-1]
+*   Guy Podjarny, Co-founder & President of Snyk [z8-2]
+*   Jussi Laakkonen, (Co-)Founder of Applifier and Noice, ex-EVP at Unity [z8-2]
+*   Otto Hilska, Founder & CEO of Swarmia, ex-CPO of Smartly.io [z8-2]
+*   Peter Downs, ex-Director of Engineering at Pipe [z8-2]
+*   Jiri Heinonen, Co-founder of Swappie [z8-2]
+*   Usman Masood, ex-CTO of Pipe [z8-2]
+*   Bjarke Klinge Staun, angel investor, ex-VC (Pleo, Trade Republic, Bolt) [z8-2]
+*   Thijn Lamers, angel investor, Founding team of Adyen [z8-2]
+*   Anniina Sulku, Comms Lead at Aiven [z8-3]`;
+
+    const expectedBlocks: KnownBlock[] = [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Realm has raised a Pre-Seed round of almost €1.7M from the following investors [z8-0]:',
+        },
+      },
+      {
+        type: 'rich_text',
+        elements: [
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 0,
+            elements: [
+              {
+                type: 'rich_text_section',
+                elements: [{type: 'text', text: 'Lifeline Ventures [z8-1]'}],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Illusian, an angel collective composed of [z8-1]:',
+                  },
+                ],
+              },
+            ],
+          },
+          // Nested List for Illusian angels
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 1,
+            elements: [
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Ilkka Paananen, Co-founder & CEO of Supercell [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Miki Kuusi, Co-founder & CEO of Wolt [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Robert Gentz, Co-founder & Co-CEO of Zalando [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Eléonore Crespo, Co-founder & CEO of Pigment [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Oskari Saarenmaa, Co-founder & CEO of Aiven [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Kristo Ovaska, Founder and ex-CEO of Smartly [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Anssi Rusi, Co-CEO of Supermetrics, ex-Founding COO of Smartly [z8-1]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Marianne Vikkula, COO of Wolt [z8-1]'},
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Riku Mäkelä, COO, International at DoorDash [z8-1]',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 0,
+            elements: [
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Guy Podjarny, Co-founder & President of Snyk [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Jussi Laakkonen, (Co-)Founder of Applifier and Noice, ex-EVP at Unity [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Otto Hilska, Founder & CEO of Swarmia, ex-CPO of Smartly.io [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Peter Downs, ex-Director of Engineering at Pipe [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Jiri Heinonen, Co-founder of Swappie [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Usman Masood, ex-CTO of Pipe [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Bjarke Klinge Staun, angel investor, ex-VC (Pleo, Trade Republic, Bolt) [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Thijn Lamers, angel investor, Founding team of Adyen [z8-2]',
+                  },
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Anniina Sulku, Comms Lead at Aiven [z8-3]',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const blocks = await markdownToBlocks(markdown, {escapeSlack: false});
+    assert.deepStrictEqual(blocks, expectedBlocks);
+  });
+
+  it('should parse nested bullet lists into rich_text block', async () => {
+    const markdown = `Investors included:
+*   **Lead Investor**: Lead Investor Name
+*   **Angel Collective**:
+    *   Angel Investor 1
+    *   Angel Investor 2
+*   **Individual Investors**:
+    *   Individual Investor 1
+    *   Individual Investor 2`;
+
+    const expectedBlocks: KnownBlock[] = [
+      // Initial paragraph
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Investors included:',
+        },
+      },
+      {
+        type: 'rich_text',
+        elements: [
+          // Top-level list
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 0,
+            elements: [
+              // Item 1 Section
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Lead Investor', style: {bold: true}}, // Bold text element
+                  {type: 'text', text: ': Lead Investor Name'},
+                ],
+              },
+              // Item 2 Section
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Angel Collective', style: {bold: true}},
+                  {type: 'text', text: ':'},
+                ],
+              },
+            ],
+          },
+          // Nested List 1 (follows the item it's nested under)
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 1,
+            elements: [
+              {
+                type: 'rich_text_section',
+                elements: [{type: 'text', text: 'Angel Investor 1'}],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [{type: 'text', text: 'Angel Investor 2'}],
+              },
+            ],
+          },
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 0,
+            elements: [
+              // Item 3 Section (placeholder for nested list)
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {
+                    type: 'text',
+                    text: 'Individual Investors',
+                    style: {bold: true},
+                  },
+                  {type: 'text', text: ':'},
+                ],
+              },
+            ],
+          },
+          // Nested List 2 (follows the item it's nested under)
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 1,
+            elements: [
+              {
+                type: 'rich_text_section',
+                elements: [{type: 'text', text: 'Individual Investor 1'}],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [{type: 'text', text: 'Individual Investor 2'}],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const blocks = await markdownToBlocks(markdown);
+    assert.deepStrictEqual(blocks, expectedBlocks);
+  });
 });

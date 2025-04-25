@@ -4,10 +4,21 @@ import {
   ImageBlock,
   KnownBlock,
   SectionBlock,
+  RichTextBlockElement,
+  RichTextSection,
+  RichTextElement,
 } from '@slack/types';
-import {ListOptions, ParsingOptions} from '../types';
-import {section, divider, header, image} from '../slack';
-import {marked} from 'marked';
+import {ParsingOptions} from '../types';
+import {
+  section,
+  divider,
+  header,
+  image,
+  richText,
+  richTextList,
+  richTextSection,
+} from '../slack';
+import marked from 'marked';
 import {XMLParser} from 'fast-xml-parser';
 
 type PhrasingToken =
@@ -20,6 +31,8 @@ type PhrasingToken =
   | marked.Tokens.Codespan
   | marked.Tokens.Text
   | marked.Tokens.HTML;
+
+type SlackRichTextContentElement = RichTextElement;
 
 function parsePlainText(element: PhrasingToken): string[] {
   switch (element.type) {
@@ -48,92 +61,280 @@ function isSectionBlock(block: KnownBlock): block is SectionBlock {
   return block.type === 'section';
 }
 
-function parseMrkdwn(
-  element: Exclude<PhrasingToken, marked.Tokens.Image>
-): string {
+function escapeForSlack(text: string, escape: boolean): string {
+  if (!escape) return text;
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function parseMrkdwnRichText(
+  element: PhrasingToken,
+  options?: ParsingOptions
+): SlackRichTextContentElement[] {
+  const shouldEscape = options?.escapeSlack !== false;
+
   switch (element.type) {
     case 'link': {
-      return `<${element.href}|${element.tokens
-        .flatMap(child => parseMrkdwn(child as typeof element))
-        .join('')}> `;
+      const textContent =
+        element.tokens?.map(t => t.raw).join('') || element.text;
+      return [{type: 'link', url: element.href, text: textContent}];
     }
-
+    case 'image':
+      return [
+        {type: 'text', text: element.title || element.text || element.href},
+      ];
     case 'em': {
-      return `_${element.tokens
-        .flatMap(child => parseMrkdwn(child as typeof element))
-        .join('')}_`;
+      const children =
+        element.tokens?.flatMap(child =>
+          parseMrkdwnRichText(child as PhrasingToken, options)
+        ) ?? [];
+      return children.map(child => ({
+        ...child,
+        style: {...('style' in child ? child.style : {}), italic: true},
+      }));
     }
-
     case 'codespan':
-      return `\`${element.text}\``;
-
+      return [{type: 'text', text: `\`${element.text}\``}];
     case 'strong': {
-      return `*${element.tokens
-        .flatMap(child => parseMrkdwn(child as typeof element))
-        .join('')}*`;
+      const children =
+        element.tokens?.flatMap(child =>
+          parseMrkdwnRichText(child as PhrasingToken, options)
+        ) ?? [];
+      return children.map(child => ({
+        ...child,
+        style: {...('style' in child ? child.style : {}), bold: true},
+      }));
     }
-
-    case 'text':
-      return element.text;
-
     case 'del': {
-      return `~${element.tokens
-        .flatMap(child => parseMrkdwn(child as typeof element))
-        .join('')}~`;
+      const children =
+        element.tokens?.flatMap(child =>
+          parseMrkdwnRichText(child as PhrasingToken, options)
+        ) ?? [];
+      return children.map(child => ({
+        ...child,
+        style: {...('style' in child ? child.style : {}), strike: true},
+      }));
     }
-
+    case 'text': {
+      const textToUse = escapeForSlack(element.text, shouldEscape);
+      return [{type: 'text', text: textToUse}];
+    }
+    case 'html': {
+      const htmlTextToUse = escapeForSlack(element.text, shouldEscape);
+      return [{type: 'text', text: htmlTextToUse}];
+    }
+    case 'br':
+      return [{type: 'text', text: '\n'}];
     default:
-      return '';
+      return [];
   }
 }
 
-function addMrkdwn(
-  content: string,
-  accumulator: (SectionBlock | ImageBlock)[]
-) {
-  const last = accumulator[accumulator.length - 1];
+function parseListItemContents(
+  tokens: marked.Token[],
+  options?: ParsingOptions
+): SlackRichTextContentElement[] {
+  const elements: SlackRichTextContentElement[] = [];
 
-  if (last && isSectionBlock(last) && last.text) {
-    last.text.text += content;
-  } else {
-    accumulator.push(section(content));
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'text':
+        if (token.tokens) {
+          elements.push(
+            ...token.tokens.flatMap(t =>
+              parseMrkdwnRichText(t as PhrasingToken, options)
+            )
+          );
+        } else {
+          elements.push(
+            ...parseMrkdwnRichText(token as PhrasingToken, options)
+          );
+        }
+        break;
+      case 'link':
+      case 'em':
+      case 'strong':
+      case 'del':
+      case 'codespan':
+      case 'br':
+      case 'image':
+      case 'html':
+        elements.push(...parseMrkdwnRichText(token as PhrasingToken, options));
+        break;
+      case 'paragraph':
+        if (token.tokens) {
+          elements.push(
+            ...token.tokens.flatMap(t =>
+              parseMrkdwnRichText(t as PhrasingToken, options)
+            )
+          );
+          elements.push({type: 'text', text: '\n'});
+        }
+        break;
+      case 'space':
+        break;
+      default:
+        console.warn(
+          'Unsupported token type in list item content:',
+          token.type
+        );
+    }
   }
+
+  // Return elements without merging for now
+  return elements.filter(
+    elem =>
+      !(
+        elem.type === 'text' &&
+        typeof elem.text === 'string' &&
+        elem.text === '' &&
+        !elem.style
+      )
+  ); // Still filter empty text
 }
 
 function parsePhrasingContentToStrings(
   element: PhrasingToken,
-  accumulator: string[]
+  accumulator: string[],
+  options?: ParsingOptions
 ) {
   if (element.type === 'image') {
     accumulator.push(element.href ?? element.title ?? element.text ?? 'image');
   } else {
-    const text = parseMrkdwn(element);
+    const text = parseMrkdwnRichText(element, options)
+      .map(e => ('text' in e ? e.text : ''))
+      .join('');
     accumulator.push(text);
   }
 }
 
-function parsePhrasingContent(
-  element: PhrasingToken,
-  accumulator: (SectionBlock | ImageBlock)[]
-) {
-  if (element.type === 'image') {
-    const imageBlock: ImageBlock = image(
-      element.href,
-      element.text || element.title || element.href,
-      element.title
-    );
-    accumulator.push(imageBlock);
-  } else {
-    const text = parseMrkdwn(element);
-    addMrkdwn(text, accumulator);
+function phrasingTokensToMrkdwnString(
+  tokens: PhrasingToken[],
+  options?: ParsingOptions
+): string {
+  const shouldEscape = options?.escapeSlack !== false;
+  let mrkdwn = '';
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'link': {
+        const linkContent = (token.tokens as PhrasingToken[]) ?? [];
+        const linkText = phrasingTokensToMrkdwnString(linkContent, options);
+        const displayLinkText = linkText.trim() || token.text || token.href;
+        mrkdwn += `<${token.href}|${displayLinkText}>`;
+        break;
+      }
+      case 'image': {
+        mrkdwn += token.text || token.title || token.href;
+        break;
+      }
+      case 'strong': {
+        const strongContent = (token.tokens as PhrasingToken[]) ?? [];
+        mrkdwn += `*${phrasingTokensToMrkdwnString(strongContent, options)}*`;
+        break;
+      }
+      case 'em': {
+        const emContent = (token.tokens as PhrasingToken[]) ?? [];
+        mrkdwn += `_${phrasingTokensToMrkdwnString(emContent, options)}_`;
+        break;
+      }
+      case 'del': {
+        const delContent = (token.tokens as PhrasingToken[]) ?? [];
+        mrkdwn += `~${phrasingTokensToMrkdwnString(delContent, options)}~`;
+        break;
+      }
+      case 'codespan': {
+        const escapedCode = escapeForSlack(token.text, shouldEscape);
+        mrkdwn += `\`${escapedCode}\``;
+        break;
+      }
+      case 'br': {
+        mrkdwn += '\\n';
+        break;
+      }
+      case 'text': {
+        const escapedText = escapeForSlack(token.text, shouldEscape);
+        mrkdwn += escapedText;
+        break;
+      }
+      case 'html': {
+        mrkdwn += token.text;
+        break;
+      }
+      default: {
+        const raw = 'raw' in token ? (token as PhrasingToken).raw : '';
+        if (raw) {
+          const escapedRaw = escapeForSlack(raw, shouldEscape);
+          mrkdwn += escapedRaw;
+        }
+      }
+    }
   }
+  return mrkdwn;
 }
 
-function parseParagraph(element: marked.Tokens.Paragraph): KnownBlock[] {
-  return element.tokens.reduce((accumulator, child) => {
-    parsePhrasingContent(child as PhrasingToken, accumulator);
-    return accumulator;
-  }, [] as (SectionBlock | ImageBlock)[]);
+function parseParagraph(
+  element: marked.Tokens.Paragraph,
+  options: ParsingOptions
+): KnownBlock[] {
+  const accumulator: (SectionBlock | ImageBlock)[] = [];
+  let currentPhrasingTokens: PhrasingToken[] = [];
+
+  const flushPhrasingTokens = () => {
+    if (currentPhrasingTokens.length > 0) {
+      const mrkdwnText = phrasingTokensToMrkdwnString(
+        currentPhrasingTokens,
+        options
+      ).trim();
+      if (mrkdwnText) {
+        for (const block of section(mrkdwnText)) {
+          accumulator.push(block);
+        }
+      }
+      currentPhrasingTokens = [];
+    }
+  };
+
+  for (const token of element.tokens) {
+    switch (token.type) {
+      case 'image':
+        flushPhrasingTokens();
+        accumulator.push(
+          image(
+            (token as marked.Tokens.Image).href,
+            (token as marked.Tokens.Image).text ||
+              (token as marked.Tokens.Image).title ||
+              (token as marked.Tokens.Image).href,
+            (token as marked.Tokens.Image).title || undefined
+          )
+        );
+        break;
+      case 'space':
+        currentPhrasingTokens.push({
+          type: 'text',
+          raw: ' ',
+          text: ' ',
+        } as marked.Tokens.Text);
+        break;
+      case 'text':
+      case 'link':
+      case 'strong':
+      case 'em':
+      case 'del':
+      case 'codespan':
+      case 'br':
+      case 'html':
+        currentPhrasingTokens.push(token as PhrasingToken);
+        break;
+      default:
+        break;
+    }
+  }
+
+  flushPhrasingTokens();
+
+  return accumulator;
 }
 
 function parseHeading(element: marked.Tokens.Heading): HeaderBlock {
@@ -144,50 +345,79 @@ function parseHeading(element: marked.Tokens.Heading): HeaderBlock {
   );
 }
 
-function parseCode(element: marked.Tokens.Code): SectionBlock {
-  return section(`\`\`\`\n${element.text}\n\`\`\``);
+function parseCode(element: marked.Tokens.Code): SectionBlock[] {
+  const accumulator: SectionBlock[] = [];
+  for (const block of section(`\`\`\`\n${element.text}\n\`\`\``)) {
+    accumulator.push(block);
+  }
+  return accumulator;
 }
 
 function parseList(
   element: marked.Tokens.List,
-  options: ListOptions = {}
-): SectionBlock {
-  let index = 0;
-  const contents = element.items.map(item => {
-    const paragraph = item.tokens[0] as marked.Tokens.Text;
-    if (!paragraph || paragraph.type !== 'text' || !paragraph.tokens?.length) {
-      return paragraph?.text || '';
+  options: ParsingOptions = {},
+  indent = 0
+): RichTextBlockElement[] {
+  const result: RichTextBlockElement[] = [];
+  let currentLevelSections: RichTextSection[] = [];
+
+  function flushCurrentLevelSections() {
+    if (currentLevelSections.length > 0) {
+      const style = element.ordered ? 'ordered' : 'bullet';
+      result.push(richTextList(currentLevelSections, style, indent));
+      currentLevelSections = [];
+    }
+  }
+
+  for (const item of element.items) {
+    const itemContentTokens: marked.Token[] = [];
+    const itemNestedLists: marked.Tokens.List[] = [];
+
+    // Separate content and nested lists
+    for (const token of item.tokens) {
+      if (token.type === 'list') {
+        itemNestedLists.push(token as marked.Tokens.List);
+      } else {
+        itemContentTokens.push(token);
+      }
     }
 
-    const text = paragraph.tokens
-      .filter(
-        (child): child is Exclude<PhrasingToken, marked.Tokens.Image> =>
-          child.type !== 'image'
-      )
-      .flatMap(parseMrkdwn)
-      .join('');
+    const contentElements = parseListItemContents(itemContentTokens, options);
 
-    if (element.ordered) {
-      index += 1;
-      return `${index}. ${text}`;
-    } else if (item.checked !== null && item.checked !== undefined) {
-      return `${options.checkboxPrefix?.(item.checked) ?? '• '}${text}`;
-    } else {
-      return `• ${text}`;
+    // Always add the content section (if any) to the current buffer first.
+    if (contentElements.length > 0) {
+      currentLevelSections.push(richTextSection(contentElements));
     }
-  });
 
-  return section(contents.join('\n'));
+    // If this item *also* has nested lists, NOW flush the buffer
+    // (which includes the parent item we just added) before processing nests.
+    if (itemNestedLists.length > 0) {
+      flushCurrentLevelSections();
+
+      // Process nested lists
+      for (const nestedListToken of itemNestedLists) {
+        result.push(...parseList(nestedListToken, options, indent + 1));
+      }
+    }
+  }
+
+  // Flush any remaining items at the end
+  flushCurrentLevelSections();
+
+  return result;
 }
 
 function combineBetweenPipes(texts: String[]): string {
   return `| ${texts.join(' | ')} |`;
 }
 
-function parseTableRows(rows: marked.Tokens.TableCell[][]): string[] {
+function parseTableRows(
+  rows: marked.Tokens.TableCell[][],
+  options: ParsingOptions
+): string[] {
   const parsedRows: string[] = [];
   rows.forEach((row, index) => {
-    const parsedCells = parseTableRow(row);
+    const parsedCells = parseTableRow(row, options);
     if (index === 1) {
       const headerRowArray = new Array(parsedCells.length).fill('---');
       const headerRow = combineBetweenPipes(headerRowArray);
@@ -198,35 +428,50 @@ function parseTableRows(rows: marked.Tokens.TableCell[][]): string[] {
   return parsedRows;
 }
 
-function parseTableRow(row: marked.Tokens.TableCell[]): String[] {
+function parseTableRow(
+  row: marked.Tokens.TableCell[],
+  options: ParsingOptions
+): String[] {
   const parsedCells: String[] = [];
   row.forEach(cell => {
-    parsedCells.push(parseTableCell(cell));
+    parsedCells.push(parseTableCell(cell, options));
   });
   return parsedCells;
 }
 
-function parseTableCell(cell: marked.Tokens.TableCell): String {
+function parseTableCell(
+  cell: marked.Tokens.TableCell,
+  options: ParsingOptions
+): String {
   const texts = cell.tokens.reduce((accumulator, child) => {
-    parsePhrasingContentToStrings(child as PhrasingToken, accumulator);
+    parsePhrasingContentToStrings(child as PhrasingToken, accumulator, options);
     return accumulator;
   }, [] as string[]);
   return texts.join(' ');
 }
 
-function parseTable(element: marked.Tokens.Table): SectionBlock {
-  const parsedRows = parseTableRows([element.header, ...element.rows]);
-
-  return section(`\`\`\`\n${parsedRows.join('\n')}\n\`\`\``);
+function parseTable(
+  element: marked.Tokens.Table,
+  options: ParsingOptions
+): SectionBlock[] {
+  const parsedRows = parseTableRows([element.header, ...element.rows], options);
+  const accumulator: SectionBlock[] = [];
+  for (const block of section(`\`\`\`\n${parsedRows.join('\n')}\n\`\`\``)) {
+    accumulator.push(block);
+  }
+  return accumulator;
 }
 
-function parseBlockquote(element: marked.Tokens.Blockquote): KnownBlock[] {
+function parseBlockquote(
+  element: marked.Tokens.Blockquote,
+  options: ParsingOptions
+): KnownBlock[] {
   return element.tokens
     .filter(
       (child): child is marked.Tokens.Paragraph => child.type === 'paragraph'
     )
     .flatMap(p =>
-      parseParagraph(p).map(block => {
+      parseParagraph(p, options).map(block => {
         if (isSectionBlock(block) && block.text?.text?.includes('\n'))
           block.text.text = '> ' + block.text.text.replace(/\n/g, '\n> ');
         return block;
@@ -259,33 +504,46 @@ function parseHTML(
 function parseToken(
   token: marked.Token,
   options: ParsingOptions
-): KnownBlock[] {
+): KnownBlock[] | RichTextBlockElement[] {
   switch (token.type) {
     case 'heading':
-      return [parseHeading(token)];
+      return [parseHeading(token as marked.Tokens.Heading)];
 
     case 'paragraph':
-      return parseParagraph(token);
+      return parseParagraph(token as marked.Tokens.Paragraph, options);
 
     case 'code':
-      return [parseCode(token)];
+      return parseCode(token as marked.Tokens.Code);
 
     case 'blockquote':
-      return parseBlockquote(token);
+      return parseBlockquote(token as marked.Tokens.Blockquote, options);
 
     case 'list':
-      return [parseList(token, options.lists)];
+      return parseList(token as marked.Tokens.List, options);
 
     case 'table':
-      return [parseTable(token)];
+      return parseTable(token as marked.Tokens.Table, options);
 
     case 'hr':
       return [parseThematicBreak()];
 
     case 'html':
-      return parseHTML(token);
+      return parseHTML(token as marked.Tokens.HTML);
+
+    case 'image':
+      return [
+        image(
+          token.href,
+          token.text || token.title || token.href,
+          token.title || undefined
+        ),
+      ];
+
+    case 'space':
+      return [];
 
     default:
+      console.warn('Unhandled token type:', token.type);
       return [];
   }
 }
@@ -294,5 +552,38 @@ export function parseBlocks(
   tokens: marked.TokensList,
   options: ParsingOptions = {}
 ): KnownBlock[] {
-  return tokens.flatMap(token => parseToken(token, options));
+  const resultBlocks: KnownBlock[] = [];
+  let currentRichTextElements: RichTextBlockElement[] = [];
+
+  function finalizeRichText() {
+    if (currentRichTextElements.length > 0) {
+      resultBlocks.push(richText(currentRichTextElements));
+      currentRichTextElements = [];
+    }
+  }
+
+  for (const token of tokens) {
+    const parsed = parseToken(token, options);
+    if (parsed.length > 0) {
+      const firstElement = parsed[0];
+      if (
+        'type' in firstElement &&
+        (firstElement.type === 'rich_text_section' ||
+          firstElement.type === 'rich_text_list' ||
+          firstElement.type === 'rich_text_preformatted' ||
+          firstElement.type === 'rich_text_quote')
+      ) {
+        currentRichTextElements.push(...(parsed as RichTextBlockElement[]));
+      } else {
+        finalizeRichText();
+        resultBlocks.push(...(parsed as KnownBlock[]));
+      }
+    } else if (token.type === 'space' && currentRichTextElements.length > 0) {
+      finalizeRichText();
+    }
+  }
+
+  finalizeRichText();
+
+  return resultBlocks;
 }
