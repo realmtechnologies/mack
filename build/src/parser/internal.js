@@ -335,10 +335,14 @@ function richTextElementsToString(elements) {
         .join('');
 }
 function parseTable(element, options) {
+    // Updated return type
     const headerRichTextCells = parseTableRow(element.header, options);
     const numCols = headerRichTextCells.length;
     // --- BEGIN 2-COLUMN HANDLING --- (Adapted for Rich Text)
-    if (numCols === 2 && element.rows.length < 8 && options.extractTables !== 'list') { // Added check for extractTables !== 'list'
+    if (numCols === 2 &&
+        element.rows.length < 8 &&
+        options.extractTables !== 'list') {
+        // Added check for extractTables !== 'list'
         const blocks = [];
         const headerStrings = headerRichTextCells.map(richTextElementsToString);
         if (headerStrings.length === 2) {
@@ -420,46 +424,38 @@ function parseTable(element, options) {
         }
         return accumulator;
     };
-    // --- NEW LOGIC FOR extractTables: 'list' ---
-    if (options.extractTables === 'list') {
-        const listSections = [];
-        const headerElements = headerRichTextCells; // Already parsed
-        element.rows.forEach(row => {
-            const rowElements = parseTableRow(row, options);
-            const currentRowCombinedElements = [];
-            for (let i = 0; i < numCols; i++) {
-                const headerCellContent = headerElements[i] || [];
-                const dataCellContent = rowElements[i] || [];
-                // Make header bold
-                const boldHeaderElements = headerCellContent.map(el => ({
-                    ...el,
-                    style: { ...('style' in el ? el.style : {}), bold: true },
-                }));
-                currentRowCombinedElements.push(...boldHeaderElements);
-                currentRowCombinedElements.push({ type: 'text', text: ': ' });
-                currentRowCombinedElements.push(...dataCellContent);
-                // Add newline if not the last cell
-                if (i < numCols - 1) {
-                    currentRowCombinedElements.push({ type: 'text', text: '\n' });
+    const parseRowsToRichTextList = () => {
+        return element.rows.map(row => {
+            const parsedDataRowCells = parseTableRow(row, options);
+            const combinedRowElements = [];
+            parsedDataRowCells.forEach((dataCellElements, cellIdx) => {
+                if (headerRichTextCells[cellIdx]) {
+                    combinedRowElements.push(...headerRichTextCells[cellIdx].map(el => ({
+                        ...el,
+                        style: { ...(el.style || {}), bold: true },
+                    })));
+                    combinedRowElements.push({
+                        type: 'text',
+                        text: ': ',
+                        style: { bold: true },
+                    });
                 }
-            }
-            // Only add row section if it has content
-            if (currentRowCombinedElements.length > 0) {
-                listSections.push(slack_1.richTextSection(currentRowCombinedElements));
-            }
+                combinedRowElements.push(...dataCellElements);
+                combinedRowElements.push({ type: 'text', text: '\n' });
+            });
+            combinedRowElements.push({ type: 'text', text: '\n\n' });
+            return {
+                type: 'rich_text_section',
+                elements: combinedRowElements.filter(el => !('text' in el) || el.text),
+            };
         });
-        // Only create list if there are sections
-        if (listSections.length > 0) {
-            const listElement = slack_1.richTextList(listSections, 'bullet', 0);
-            return { type: 'richTextList', value: [listElement] };
-        }
-        else {
-            // Return empty blocks if no list sections were generated
-            return { type: 'blocks', value: [] };
-        }
+    };
+    if (options.extractTables === 'list') {
+        const elements = parseRowsToRichTextList();
+        return { type: 'blocks', value: [{ type: 'rich_text', elements }] };
     }
-    // --- END NEW LOGIC ---
-    if (options.extractTables === true) { // Check for boolean true
+    else if (options.extractTables === true) {
+        // Check for boolean true
         return { type: 'tableArray', value: parseRowsToStringArray() }; // Return structured type
     }
     else {
@@ -526,9 +522,6 @@ function parseToken(token, options) {
                     return { type: 'blocks', value: parsed.value };
                 case 'tableArray':
                     return { type: 'tableArray', value: parsed.value };
-                case 'richTextList':
-                    // Return the specific type for tables converted to lists
-                    return { type: 'tableAsRichTextList', value: parsed.value };
                 default:
                     return { type: 'blocks', value: [] };
             }
@@ -579,13 +572,6 @@ function parseBlocks(tokens, options = {}) {
                 if (parsed.value.length > 0) {
                     finalizeRichText();
                     extractedTables.push(parsed.value);
-                }
-                break;
-            case 'tableAsRichTextList': // Handles the specific table-list conversion
-                if (parsed.value.length > 0) {
-                    finalizeRichText(); // Finalize any pending standard rich text
-                    // The value should already be the single rich_text_list element
-                    resultBlocks.push(slack_1.richText(parsed.value)); // Wrap it in a richText block
                 }
                 break;
         }

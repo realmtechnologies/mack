@@ -7,6 +7,7 @@ import {
   RichTextBlockElement,
   RichTextSection,
   RichTextElement,
+  RichTextList,
 } from '@slack/types';
 import {ParsingOptions, MarkdownToBlocksResult} from '../types';
 import {
@@ -462,7 +463,7 @@ function richTextElementsToString(
 type ParsedTableResult =
   | {type: 'blocks'; value: KnownBlock[]}
   | {type: 'tableArray'; value: string[][]}
-  | {type: 'richTextList'; value: RichTextBlockElement[]};
+  | {type: 'tableCellsAsRichTextSections'; value: RichTextSection[]};
 
 function parseTable(
   element: marked.Tokens.Table,
@@ -582,52 +583,42 @@ function parseTable(
     return accumulator;
   };
 
-  // --- NEW LOGIC FOR extractTables: 'list' ---
-  if (options.extractTables === 'list') {
-    const listSections: RichTextSection[] = [];
-    const headerElements = headerRichTextCells; // Already parsed
+  const parseRowsToRichTextList = (): RichTextSection[] => {
+    return element.rows.map(row => {
+      const parsedDataRowCells = parseTableRow(row, options);
+      const combinedRowElements: SlackRichTextContentElement[] = [];
 
-    element.rows.forEach(row => {
-      const rowElements = parseTableRow(row, options);
-      const currentRowCombinedElements: SlackRichTextContentElement[] = [];
-
-      for (let i = 0; i < numCols; i++) {
-        const headerCellContent = headerElements[i] || [];
-        const dataCellContent = rowElements[i] || [];
-
-        // Make header bold
-        const boldHeaderElements = headerCellContent.map(el => ({
-          ...el,
-          style: {...('style' in el ? el.style : {}), bold: true},
-        }));
-
-        currentRowCombinedElements.push(...boldHeaderElements);
-        currentRowCombinedElements.push({type: 'text', text: ': '});
-        currentRowCombinedElements.push(...dataCellContent);
-
-        // Add newline if not the last cell
-        if (i < numCols - 1) {
-          currentRowCombinedElements.push({type: 'text', text: '\n'});
+      parsedDataRowCells.forEach((dataCellElements, cellIdx) => {
+        if (headerRichTextCells[cellIdx]) {
+          combinedRowElements.push(
+            ...headerRichTextCells[cellIdx].map(el => ({
+              ...el,
+              style: {...(el.style || {}), bold: true},
+            }))
+          );
+          combinedRowElements.push({
+            type: 'text' as const,
+            text: ': ',
+            style: {bold: true},
+          });
         }
-      }
-      // Only add row section if it has content
-      if (currentRowCombinedElements.length > 0) {
-        listSections.push(richTextSection(currentRowCombinedElements));
-      }
+
+        combinedRowElements.push(...dataCellElements);
+        combinedRowElements.push({type: 'text' as const, text: '\n'});
+      });
+      combinedRowElements.push({type: 'text' as const, text: '\n\n'});
+
+      return {
+        type: 'rich_text_section' as const,
+        elements: combinedRowElements.filter(el => !('text' in el) || el.text),
+      };
     });
+  };
 
-    // Only create list if there are sections
-    if (listSections.length > 0) {
-      const listElement = richTextList(listSections, 'bullet', 0);
-      return {type: 'richTextList', value: [listElement]};
-    } else {
-      // Return empty blocks if no list sections were generated
-      return {type: 'blocks', value: []};
-    }
-  }
-  // --- END NEW LOGIC ---
-
-  if (options.extractTables === true) {
+  if (options.extractTables === 'list') {
+    const elements = parseRowsToRichTextList();
+    return {type: 'blocks', value: [{type: 'rich_text' as const, elements}]};
+  } else if (options.extractTables === true) {
     // Check for boolean true
     return {type: 'tableArray', value: parseRowsToStringArray()}; // Return structured type
   } else {
@@ -679,8 +670,7 @@ function parseHTML(
 type StructuredTokenParseResult =
   | {type: 'blocks'; value: KnownBlock[]}
   | {type: 'richtext'; value: RichTextBlockElement[]}
-  | {type: 'tableArray'; value: string[][]}
-  | {type: 'tableAsRichTextList'; value: RichTextBlockElement[]}; // New type
+  | {type: 'tableArray'; value: string[][]};
 
 function parseToken(
   token: marked.Token,
@@ -721,9 +711,6 @@ function parseToken(
           return {type: 'blocks', value: parsed.value};
         case 'tableArray':
           return {type: 'tableArray', value: parsed.value};
-        case 'richTextList':
-          // Return the specific type for tables converted to lists
-          return {type: 'tableAsRichTextList', value: parsed.value};
         default:
           return {type: 'blocks', value: []};
       }
@@ -775,8 +762,7 @@ export function parseBlocks(
   type StructuredTokenParseResult =
     | {type: 'blocks'; value: KnownBlock[]}
     | {type: 'richtext'; value: RichTextBlockElement[]}
-    | {type: 'tableArray'; value: string[][]}
-    | {type: 'tableAsRichTextList'; value: RichTextBlockElement[]};
+    | {type: 'tableArray'; value: string[][]};
 
   for (const token of tokens) {
     const parsed: StructuredTokenParseResult = parseToken(token, options);
@@ -797,13 +783,6 @@ export function parseBlocks(
         if (parsed.value.length > 0) {
           finalizeRichText();
           extractedTables.push(parsed.value);
-        }
-        break;
-      case 'tableAsRichTextList': // Handles the specific table-list conversion
-        if (parsed.value.length > 0) {
-          finalizeRichText(); // Finalize any pending standard rich text
-          // The value should already be the single rich_text_list element
-          resultBlocks.push(richText(parsed.value)); // Wrap it in a richText block
         }
         break;
     }

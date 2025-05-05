@@ -638,59 +638,82 @@ describe('table parsing', () => {
 
     const expectedBlocks: KnownBlock[] = [
       {
-        type: 'rich_text',
         elements: [
           {
-            type: 'rich_text_list',
-            style: 'bullet',
-            indent: 0,
             elements: [
               {
-                type: 'rich_text_section',
                 elements: [
-                  {type: 'text', text: 'Item', style: {bold: true}},
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: 'Apples'},
-                  {type: 'text', text: '\n'}, // Newline between cells
-                  {type: 'text', text: 'Qty', style: {bold: true}},
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '5'},
-                  {type: 'text', text: '\n'}, // Newline between cells
-                  {type: 'text', text: 'Price ', style: {bold: true}},
-                  {
-                    type: 'text',
-                    text: 'each',
-                    style: {bold: true, italic: true},
-                  }, // Handling markdown within header
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '€1.50'},
+                  {style: {bold: true}, text: 'Item', type: 'text'},
+                  {text: 'Apples', type: 'text'},
                 ],
+                type: 'rich_text_section',
               },
               {
-                type: 'rich_text_section',
                 elements: [
-                  {type: 'text', text: 'Item', style: {bold: true}},
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: 'Oranges'},
-                  {type: 'text', text: '\n'},
-                  {type: 'text', text: 'Qty', style: {bold: true}},
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '12'},
-                  {type: 'text', text: '\n'},
-                  {type: 'text', text: 'Price ', style: {bold: true}},
-                  {
-                    type: 'text',
-                    text: 'each',
-                    style: {bold: true, italic: true},
-                  },
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '€1.00', style: {strike: true}}, // Handling markdown within cell
-                  {type: 'text', text: ' €0.80'},
+                  {style: {bold: true}, text: 'Qty', type: 'text'},
+                  {text: '5', type: 'text'},
                 ],
+                type: 'rich_text_section',
+              },
+              {
+                elements: [
+                  {style: {bold: true}, text: 'Price ', type: 'text'},
+                  {
+                    style: {bold: true, italic: true},
+                    text: 'each',
+                    type: 'text',
+                  },
+                  {text: '€1.50', type: 'text'},
+                ],
+                type: 'rich_text_section',
               },
             ],
+            indent: 0,
+            style: 'bullet',
+            type: 'rich_text_list',
+          },
+          {
+            elements: [
+              {
+                elements: [
+                  {style: {bold: true}, text: 'Item', type: 'text'},
+                  {text: 'Oranges', type: 'text'},
+                ],
+                type: 'rich_text_section',
+              },
+              {
+                elements: [
+                  {style: {bold: true}, text: 'Qty', type: 'text'},
+                  {text: '12', type: 'text'},
+                ],
+                type: 'rich_text_section',
+              },
+              {
+                elements: [
+                  {style: {bold: true}, text: 'Price ', type: 'text'},
+                  {
+                    style: {bold: true, italic: true},
+                    text: 'each',
+                    type: 'text',
+                  },
+                  {style: {strike: true}, text: '€1.00', type: 'text'},
+                  {style: {bold: true}, text: 'Price ', type: 'text'},
+                  {
+                    style: {bold: true, italic: true},
+                    text: 'each',
+                    type: 'text',
+                  },
+                  {text: ' €0.80', type: 'text'},
+                ],
+                type: 'rich_text_section',
+              },
+            ],
+            indent: 0,
+            style: 'bullet',
+            type: 'rich_text_list',
           },
         ],
+        type: 'rich_text',
       },
     ];
 

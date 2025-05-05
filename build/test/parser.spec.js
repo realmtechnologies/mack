@@ -569,7 +569,7 @@ describe('table parsing', () => {
         assert_1.default.deepStrictEqual(result.blocks, expectedBlocks, 'Test Failed: extractTables: false');
         assert_1.default.strictEqual(result.tables, undefined, 'Test Failed: extractTables: false (tables)');
     });
-    it('should parse a table into a rich_text_list when extractTables is \'list\'', async () => {
+    it("should parse a table into a rich_text_list when extractTables is 'list'", async () => {
         const markdown = `
 | Item      | Qty | Price *each* |
 | :-------- | :-: | -----------: |
@@ -578,51 +578,82 @@ describe('table parsing', () => {
     `;
         const expectedBlocks = [
             {
-                type: 'rich_text',
                 elements: [
                     {
-                        type: 'rich_text_list',
-                        style: 'bullet',
-                        indent: 0,
                         elements: [
                             {
-                                type: 'rich_text_section',
                                 elements: [
-                                    { type: 'text', text: 'Item', style: { bold: true } },
-                                    { type: 'text', text: ': ' },
-                                    { type: 'text', text: 'Apples' },
-                                    { type: 'text', text: '\n' },
-                                    { type: 'text', text: 'Qty', style: { bold: true } },
-                                    { type: 'text', text: ': ' },
-                                    { type: 'text', text: '5' },
-                                    { type: 'text', text: '\n' },
-                                    { type: 'text', text: 'Price ', style: { bold: true } },
-                                    { type: 'text', text: 'each', style: { bold: true, italic: true } },
-                                    { type: 'text', text: ': ' },
-                                    { type: 'text', text: '€1.50' },
+                                    { style: { bold: true }, text: 'Item', type: 'text' },
+                                    { text: 'Apples', type: 'text' },
                                 ],
+                                type: 'rich_text_section',
                             },
                             {
-                                type: 'rich_text_section',
                                 elements: [
-                                    { type: 'text', text: 'Item', style: { bold: true } },
-                                    { type: 'text', text: ': ' },
-                                    { type: 'text', text: 'Oranges' },
-                                    { type: 'text', text: '\n' },
-                                    { type: 'text', text: 'Qty', style: { bold: true } },
-                                    { type: 'text', text: ': ' },
-                                    { type: 'text', text: '12' },
-                                    { type: 'text', text: '\n' },
-                                    { type: 'text', text: 'Price ', style: { bold: true } },
-                                    { type: 'text', text: 'each', style: { bold: true, italic: true } },
-                                    { type: 'text', text: ': ' },
-                                    { type: 'text', text: '€1.00', style: { strike: true } },
-                                    { type: 'text', text: ' €0.80' },
+                                    { style: { bold: true }, text: 'Qty', type: 'text' },
+                                    { text: '5', type: 'text' },
                                 ],
+                                type: 'rich_text_section',
+                            },
+                            {
+                                elements: [
+                                    { style: { bold: true }, text: 'Price ', type: 'text' },
+                                    {
+                                        style: { bold: true, italic: true },
+                                        text: 'each',
+                                        type: 'text',
+                                    },
+                                    { text: '€1.50', type: 'text' },
+                                ],
+                                type: 'rich_text_section',
                             },
                         ],
+                        indent: 0,
+                        style: 'bullet',
+                        type: 'rich_text_list',
+                    },
+                    {
+                        elements: [
+                            {
+                                elements: [
+                                    { style: { bold: true }, text: 'Item', type: 'text' },
+                                    { text: 'Oranges', type: 'text' },
+                                ],
+                                type: 'rich_text_section',
+                            },
+                            {
+                                elements: [
+                                    { style: { bold: true }, text: 'Qty', type: 'text' },
+                                    { text: '12', type: 'text' },
+                                ],
+                                type: 'rich_text_section',
+                            },
+                            {
+                                elements: [
+                                    { style: { bold: true }, text: 'Price ', type: 'text' },
+                                    {
+                                        style: { bold: true, italic: true },
+                                        text: 'each',
+                                        type: 'text',
+                                    },
+                                    { style: { strike: true }, text: '€1.00', type: 'text' },
+                                    { style: { bold: true }, text: 'Price ', type: 'text' },
+                                    {
+                                        style: { bold: true, italic: true },
+                                        text: 'each',
+                                        type: 'text',
+                                    },
+                                    { text: ' €0.80', type: 'text' },
+                                ],
+                                type: 'rich_text_section',
+                            },
+                        ],
+                        indent: 0,
+                        style: 'bullet',
+                        type: 'rich_text_list',
                     },
                 ],
+                type: 'rich_text',
             },
         ];
         const result = await index_1.markdownToBlocks(markdown, { extractTables: 'list' });
