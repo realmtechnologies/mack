@@ -5,6 +5,8 @@ import {markdownToBlocks} from '../src/index';
 import {KnownBlock} from '@slack/types';
 import assert from 'assert';
 
+import {divider} from '../src/slack';
+
 describe('parser', () => {
   it('should parse basic markdown', () => {
     const tokens = marked.lexer('**a ~b~** c[*d*](https://example.com)');
@@ -12,7 +14,7 @@ describe('parser', () => {
 
     const expected = slack.section('*a ~b~* c<https://example.com|_d_>');
 
-    expect(actual).toStrictEqual(expected);
+    expect(actual.blocks).toStrictEqual(expected);
   });
 
   it('should parse header', () => {
@@ -21,7 +23,7 @@ describe('parser', () => {
 
     const expected = [slack.header('a')];
 
-    expect(actual).toStrictEqual(expected);
+    expect(actual.blocks).toStrictEqual(expected);
   });
 
   it('should parse thematic break', () => {
@@ -30,7 +32,7 @@ describe('parser', () => {
 
     const expected = [slack.divider()];
 
-    expect(actual).toStrictEqual(expected);
+    expect(actual.blocks).toStrictEqual(expected);
   });
 
   it('should parse lists', () => {
@@ -79,7 +81,7 @@ describe('parser', () => {
       ]),
     ];
 
-    expect(actual).toStrictEqual(expected);
+    expect(actual.blocks).toStrictEqual(expected);
   });
 
   it('should parse images', () => {
@@ -91,7 +93,7 @@ describe('parser', () => {
       slack.image('url', 'url'),
     ];
 
-    expect(actual).toStrictEqual(expected);
+    expect(actual.blocks).toStrictEqual(expected);
   });
 });
 
@@ -100,7 +102,7 @@ it('should truncate basic markdown', () => {
   const tokens = marked.lexer(a4000);
   const actual = parseBlocks(tokens);
   const expected = slack.section(a4000);
-  expect(actual.length).toStrictEqual(expected.length);
+  expect(actual.blocks.length).toStrictEqual(expected.length);
 });
 
 it('should truncate header', () => {
@@ -112,7 +114,7 @@ it('should truncate header', () => {
 
   const expected = [slack.header(a150)];
 
-  expect(actual.length).toStrictEqual(expected.length);
+  expect(actual.blocks.length).toStrictEqual(expected.length);
 });
 
 it('should truncate image title', () => {
@@ -124,7 +126,7 @@ it('should truncate image title', () => {
 
   const expected = [slack.image('url', a2000)];
 
-  expect(actual.length).toStrictEqual(expected.length);
+  expect(actual.blocks.length).toStrictEqual(expected.length);
 });
 
 describe('rich text lists', () => {
@@ -362,8 +364,8 @@ Realm has raised a Pre-Seed round of almost €1.7M from the following investors
       },
     ];
 
-    const blocks = await markdownToBlocks(markdown, {escapeSlack: false});
-    assert.deepStrictEqual(blocks, expectedBlocks);
+    const result = await markdownToBlocks(markdown, {escapeSlack: false});
+    assert.deepStrictEqual(result.blocks, expectedBlocks);
   });
 
   it('should parse nested bullet lists into rich_text block', async () => {
@@ -467,7 +469,233 @@ Realm has raised a Pre-Seed round of almost €1.7M from the following investors
       },
     ];
 
-    const blocks = await markdownToBlocks(markdown);
-    assert.deepStrictEqual(blocks, expectedBlocks);
+    const result = await markdownToBlocks(markdown);
+    assert.deepStrictEqual(result.blocks, expectedBlocks);
+  });
+});
+
+describe('table parsing', () => {
+  it('should parse a table into an ASCII code block by default', async () => {
+    const markdown = `
+| Header 1 | Header 2 | Header 3 |
+|---|---|---|
+| R1C1 | R1C2 | R1C3 |
+| R2 C1 | R2 C2 | R2 C3 |
+    `;
+    const expectedAsciiTable = `\`\`\`
+┌──────────┬──────────┬──────────┐
+│ Header 1 │ Header 2 │ Header 3 │
+├──────────┼──────────┼──────────┤
+│ R1C1     │ R1C2     │ R1C3     │
+│ R2 C1    │ R2 C2    │ R2 C3    │
+└──────────┴──────────┴──────────┘
+\`\`\``;
+    const expectedBlocks: KnownBlock[] = slack.section(expectedAsciiTable);
+
+    const result = await markdownToBlocks(markdown);
+    assert.deepStrictEqual(result.blocks, expectedBlocks);
+    assert.strictEqual(result.tables, undefined);
+  });
+
+  it('should extract table data when extractTables is true', async () => {
+    const markdown = `
+| Header 1 | Header 2 | Header 3 |
+|---|---|---|
+| R1C1 | R1C2 | R1C3 |
+| R2 C1 | R2 C2 | R2 C3 |
+    `;
+    const expectedTables: string[][][] = [
+      [
+        ['Header 1', 'Header 2', 'Header 3'],
+        ['R1C1', 'R1C2', 'R1C3'],
+        ['R2 C1', 'R2 C2', 'R2 C3'],
+      ],
+    ];
+
+    const result = await markdownToBlocks(markdown, {extractTables: true});
+    // No blocks should be generated for the table itself when extracting
+    assert.deepStrictEqual(result.blocks, []);
+    assert.deepStrictEqual(result.tables, expectedTables);
+  });
+
+  it('should parse a table into an ASCII code block when extractTables is false', async () => {
+    const markdown = `
+| Header 1 | Header 2 | Header 3 |
+|---|---|---|
+| R1C1 | R1C2 | R1 C3 |
+| Row 2, Col 1 | R2 C2 | R2 C3 |
+    `;
+    // Note: Column widths are determined by the longest cell content in each column.
+    // 'Row 2, Col 1' (12) > 'Header 1' (8) > 'R1C1' (4)
+    // 'Header 2' (8) > 'R1C2' (4) > 'R2 C2' (5)
+    // 'Header 3' (8) > 'R1 C3' (5) > 'R2 C3' (5)
+    const expectedAsciiTable = `\`\`\`
+┌──────────────┬──────────┬──────────┐
+│ Header 1     │ Header 2 │ Header 3 │
+├──────────────┼──────────┼──────────┤
+│ R1C1         │ R1C2     │ R1 C3    │
+│ Row 2, Col 1 │ R2 C2    │ R2 C3    │
+└──────────────┴──────────┴──────────┘
+\`\`\``;
+
+    const expectedBlocks: KnownBlock[] = slack.section(expectedAsciiTable);
+
+    const result = await markdownToBlocks(markdown, {extractTables: false});
+    // Check block content
+    assert.deepStrictEqual(result.blocks, expectedBlocks);
+    // Ensure tables array is undefined or empty when using ascii format
+    assert.strictEqual(result.tables, undefined);
+  });
+
+  it('should format a 2-column table as fields blocks regardless of extractTables option', async () => {
+    const markdown = `
+| Month    | Savings |
+| :------- | ------: |
+| January  |   $250  |
+| February |    $80  |
+| March    |   $420  |
+    `;
+
+    const expectedBlocks: KnownBlock[] = [
+      {
+        type: 'section',
+        fields: [
+          {type: 'mrkdwn', text: '*Month*'}, // Header cells are bolded
+          {type: 'mrkdwn', text: '*Savings*'},
+        ],
+      },
+      divider(), // Divider after header
+      {
+        type: 'section',
+        fields: [
+          {type: 'mrkdwn', text: 'January'},
+          {type: 'mrkdwn', text: '$250'},
+        ],
+      },
+      {
+        type: 'section',
+        fields: [
+          {type: 'mrkdwn', text: 'February'},
+          {type: 'mrkdwn', text: '$80'},
+        ],
+      },
+      {
+        type: 'section',
+        fields: [
+          {type: 'mrkdwn', text: 'March'},
+          {type: 'mrkdwn', text: '$420'},
+        ],
+      },
+    ];
+
+    // Test with default options
+    let result = await markdownToBlocks(markdown);
+    assert.deepStrictEqual(
+      result.blocks,
+      expectedBlocks,
+      'Test Failed: Default options'
+    );
+    assert.strictEqual(
+      result.tables,
+      undefined,
+      'Test Failed: Default options (tables)'
+    );
+
+    // Test with extractTables: true
+    result = await markdownToBlocks(markdown, {extractTables: true});
+    assert.deepStrictEqual(
+      result.blocks,
+      expectedBlocks,
+      'Test Failed: extractTables: true'
+    );
+    assert.strictEqual(
+      result.tables,
+      undefined,
+      'Test Failed: extractTables: true (tables)'
+    );
+
+    // Test with extractTables: 'ascii'
+    result = await markdownToBlocks(markdown, {extractTables: false});
+    assert.deepStrictEqual(
+      result.blocks,
+      expectedBlocks,
+      'Test Failed: extractTables: false'
+    );
+    assert.strictEqual(
+      result.tables,
+      undefined,
+      'Test Failed: extractTables: false (tables)'
+    );
+  });
+
+  it("should parse a table into a rich_text_list when extractTables is 'list'", async () => {
+    const markdown = `
+| Item      | Qty | Price *each* |
+| :-------- | :-: | -----------: |
+| Apples    |  5  | €1.50        |
+| Oranges   | 12  | ~€1.00~ €0.80 |
+    `;
+
+    const expectedBlocks: KnownBlock[] = [
+      {
+        type: 'rich_text',
+        elements: [
+          {
+            type: 'rich_text_list',
+            style: 'bullet',
+            indent: 0,
+            elements: [
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Item', style: {bold: true}},
+                  {type: 'text', text: ': '},
+                  {type: 'text', text: 'Apples'},
+                  {type: 'text', text: '\n'}, // Newline between cells
+                  {type: 'text', text: 'Qty', style: {bold: true}},
+                  {type: 'text', text: ': '},
+                  {type: 'text', text: '5'},
+                  {type: 'text', text: '\n'}, // Newline between cells
+                  {type: 'text', text: 'Price ', style: {bold: true}},
+                  {
+                    type: 'text',
+                    text: 'each',
+                    style: {bold: true, italic: true},
+                  }, // Handling markdown within header
+                  {type: 'text', text: ': '},
+                  {type: 'text', text: '€1.50'},
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Item', style: {bold: true}},
+                  {type: 'text', text: ': '},
+                  {type: 'text', text: 'Oranges'},
+                  {type: 'text', text: '\n'},
+                  {type: 'text', text: 'Qty', style: {bold: true}},
+                  {type: 'text', text: ': '},
+                  {type: 'text', text: '12'},
+                  {type: 'text', text: '\n'},
+                  {type: 'text', text: 'Price ', style: {bold: true}},
+                  {
+                    type: 'text',
+                    text: 'each',
+                    style: {bold: true, italic: true},
+                  },
+                  {type: 'text', text: ': '},
+                  {type: 'text', text: '€1.00', style: {strike: true}}, // Handling markdown within cell
+                  {type: 'text', text: ' €0.80'},
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const result = await markdownToBlocks(markdown, {extractTables: 'list'});
+    assert.deepStrictEqual(result.blocks, expectedBlocks);
+    assert.strictEqual(result.tables, undefined);
   });
 });

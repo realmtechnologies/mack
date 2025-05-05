@@ -26,13 +26,13 @@ a **b** _c_ **_d_ e**
 - [ ] checkbox false
 - [x] checkbox true
 
-| Syntax      | Description |
-| ----------- | ----------- |
-| Header      | Title       |
-| Paragraph   | Text        |
+| Syntax      | Description | Test Col |
+| ----------- | ----------- | -------- |
+| Header      | Title       | Test 1   |
+| Paragraph   | Text        | Test 2   |
 `;
 
-    const actual = await markdownToBlocks(text);
+    const result = await markdownToBlocks(text);
 
     const expected = [
       slack.section('a *b* _c_ *_d_ e*'),
@@ -90,23 +90,25 @@ a **b** _c_ **_d_ e**
         ),
       ]),
       slack.section(
-        '```\n' +
-          '| Syntax | Description |\n' +
-          '| --- | --- |\n' +
-          '| Header | Title |\n' +
-          '| Paragraph | Text |\n' +
-          '```'
+        `\`\`\`
+┌───────────┬─────────────┬──────────┐
+│ Syntax    │ Description │ Test Col │
+├───────────┼─────────────┼──────────┤
+│ Header    │ Title       │ Test 1   │
+│ Paragraph │ Text        │ Test 2   │
+└───────────┴─────────────┴──────────┘
+\`\`\``
       ),
     ].flat();
 
-    expect(actual).toStrictEqual(expected);
+    expect(result.blocks).toStrictEqual(expected);
   });
 
   it('should parse long markdown', async () => {
     const text: string = new Array(3500).fill('a').join('') + 'bbbcccdddeee';
-    const actual = await markdownToBlocks(text);
+    const result = await markdownToBlocks(text);
     const expected = slack.section(text);
-    expect(actual).toStrictEqual(expected);
+    expect(result.blocks).toStrictEqual(expected);
   });
 
   describe('code blocks', () => {
@@ -119,7 +121,7 @@ if (a === 'hi') {
 }
 \`\`\``;
 
-      const actual = await markdownToBlocks(text);
+      const result = await markdownToBlocks(text);
 
       const expected = slack.section(
         `\`\`\`
@@ -131,7 +133,7 @@ if (a === 'hi') {
 \`\`\``
       );
 
-      expect(actual).toStrictEqual(expected);
+      expect(result.blocks).toStrictEqual(expected);
     });
 
     it('should parse code blocks with language', async () => {
@@ -143,7 +145,7 @@ if (a === 'hi') {
 }
 \`\`\``;
 
-      const actual = await markdownToBlocks(text);
+      const result = await markdownToBlocks(text);
 
       const expected = slack.section(
         `\`\`\`
@@ -155,13 +157,13 @@ if (a === 'hi') {
 \`\`\``
       );
 
-      expect(actual).toStrictEqual(expected);
+      expect(result.blocks).toStrictEqual(expected);
     });
   });
 
   it('should correctly escape text', async () => {
-    const actual = await markdownToBlocks('<>&\'""\'&><', {escapeSlack: true});
+    const result = await markdownToBlocks('<>&\'""\'&><', {escapeSlack: true});
     const expected = slack.section('&lt;&gt;&amp;\'""\'&amp;&gt;&lt;');
-    expect(actual).toStrictEqual(expected);
+    expect(result.blocks).toStrictEqual(expected);
   });
 });

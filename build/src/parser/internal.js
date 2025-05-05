@@ -115,23 +115,10 @@ function parseListItemContents(tokens, options) {
                 console.warn('Unsupported token type in list item content:', token.type);
         }
     }
-    // Return elements without merging for now
     return elements.filter(elem => !(elem.type === 'text' &&
         typeof elem.text === 'string' &&
         elem.text === '' &&
-        !elem.style)); // Still filter empty text
-}
-function parsePhrasingContentToStrings(element, accumulator, options) {
-    var _a, _b, _c;
-    if (element.type === 'image') {
-        accumulator.push((_c = (_b = (_a = element.href) !== null && _a !== void 0 ? _a : element.title) !== null && _b !== void 0 ? _b : element.text) !== null && _c !== void 0 ? _c : 'image');
-    }
-    else {
-        const text = parseMrkdwnRichText(element, options)
-            .map(e => ('text' in e ? e.text : ''))
-            .join('');
-        accumulator.push(text);
-    }
+        !elem.style));
 }
 function phrasingTokensToMrkdwnString(tokens, options) {
     var _a, _b, _c, _d;
@@ -201,7 +188,7 @@ function parseParagraph(element, options) {
         if (currentPhrasingTokens.length > 0) {
             const mrkdwnText = phrasingTokensToMrkdwnString(currentPhrasingTokens, options).trim();
             if (mrkdwnText) {
-                for (const block of slack_1.section(mrkdwnText)) {
+                for (const block of slack_1.section(mrkdwnText, { splitParagraphs: true })) {
                     accumulator.push(block);
                 }
             }
@@ -293,22 +280,6 @@ function parseList(element, options = {}, indent = 0) {
     flushCurrentLevelSections();
     return result;
 }
-function combineBetweenPipes(texts) {
-    return `| ${texts.join(' | ')} |`;
-}
-function parseTableRows(rows, options) {
-    const parsedRows = [];
-    rows.forEach((row, index) => {
-        const parsedCells = parseTableRow(row, options);
-        if (index === 1) {
-            const headerRowArray = new Array(parsedCells.length).fill('---');
-            const headerRow = combineBetweenPipes(headerRowArray);
-            parsedRows.push(headerRow);
-        }
-        parsedRows.push(combineBetweenPipes(parsedCells));
-    });
-    return parsedRows;
-}
 function parseTableRow(row, options) {
     const parsedCells = [];
     row.forEach(cell => {
@@ -317,19 +288,184 @@ function parseTableRow(row, options) {
     return parsedCells;
 }
 function parseTableCell(cell, options) {
-    const texts = cell.tokens.reduce((accumulator, child) => {
-        parsePhrasingContentToStrings(child, accumulator, options);
-        return accumulator;
-    }, []);
-    return texts.join(' ');
+    // Parse phrasing tokens within the cell into Slack rich text elements
+    const richTextElements = cell.tokens.flatMap(token => parseMrkdwnRichText(token, options));
+    // Simple trim: remove leading/trailing empty/whitespace-only text elements
+    let startIndex = 0;
+    while (startIndex < richTextElements.length) {
+        const elem = richTextElements[startIndex];
+        if (elem.type === 'text' &&
+            !elem.text.trim() &&
+            !elem.style // Keep styled empty elements
+        ) {
+            startIndex++;
+        }
+        else {
+            break;
+        }
+    }
+    let endIndex = richTextElements.length - 1;
+    while (endIndex >= startIndex) {
+        const elem = richTextElements[endIndex];
+        if (elem.type === 'text' &&
+            !elem.text.trim() &&
+            !elem.style // Keep styled empty elements
+        ) {
+            endIndex--;
+        }
+        else {
+            break;
+        }
+    }
+    return richTextElements.slice(startIndex, endIndex + 1);
+}
+// Helper to convert rich text elements to a plain string (simplified)
+function richTextElementsToString(elements) {
+    return elements
+        .map(el => {
+        if (el.type === 'text')
+            return el.text;
+        if (el.type === 'link')
+            return el.text || el.url;
+        if (el.type === 'emoji')
+            return `:${el.name}:`;
+        // Add other element types as needed
+        return '';
+    })
+        .join('');
 }
 function parseTable(element, options) {
-    const parsedRows = parseTableRows([element.header, ...element.rows], options);
-    const accumulator = [];
-    for (const block of slack_1.section(`\`\`\`\n${parsedRows.join('\n')}\n\`\`\``)) {
-        accumulator.push(block);
+    const headerRichTextCells = parseTableRow(element.header, options);
+    const numCols = headerRichTextCells.length;
+    // --- BEGIN 2-COLUMN HANDLING --- (Adapted for Rich Text)
+    if (numCols === 2 && element.rows.length < 8 && options.extractTables !== 'list') { // Added check for extractTables !== 'list'
+        const blocks = [];
+        const headerStrings = headerRichTextCells.map(richTextElementsToString);
+        if (headerStrings.length === 2) {
+            blocks.push({
+                type: 'section',
+                fields: [
+                    { type: 'mrkdwn', text: `*${headerStrings[0]}*` },
+                    { type: 'mrkdwn', text: `*${headerStrings[1]}*` },
+                ],
+            });
+            if (element.rows.length) {
+                blocks.push(slack_1.divider());
+            }
+        }
+        element.rows.forEach(row => {
+            const dataRichTextCells = parseTableRow(row, options);
+            const dataStrings = dataRichTextCells.map(richTextElementsToString);
+            if (dataStrings.length === 2) {
+                blocks.push({
+                    type: 'section',
+                    fields: [
+                        { type: 'mrkdwn', text: dataStrings[0] },
+                        { type: 'mrkdwn', text: dataStrings[1] },
+                    ],
+                });
+            }
+        });
+        return { type: 'blocks', value: blocks }; // Return structured type
     }
-    return accumulator;
+    // --- END 2-COLUMN HANDLING ---
+    const parseRowsToStringArray = () => {
+        const headerStrings = headerRichTextCells.map(richTextElementsToString);
+        const dataRowsStrings = element.rows.map(row => {
+            const richTextRow = parseTableRow(row, options);
+            return richTextRow.map(richTextElementsToString);
+        });
+        return [headerStrings, ...dataRowsStrings];
+    };
+    const parseRowsToAsciiTable = () => {
+        const headerStrings = headerRichTextCells.map(richTextElementsToString);
+        const dataRowsStrings = element.rows.map(row => {
+            const richTextRow = parseTableRow(row, options);
+            return richTextRow.map(richTextElementsToString);
+        });
+        const allRows = [headerStrings, ...dataRowsStrings];
+        if (allRows.length === 0 || allRows[0].length === 0) {
+            return [];
+        }
+        const colWidths = new Array(numCols).fill(0);
+        for (const row of allRows) {
+            for (let i = 0; i < numCols; i++) {
+                const cellContent = row[i] || '';
+                colWidths[i] = Math.max(colWidths[i], cellContent.length);
+            }
+        }
+        const formatRow = (row, separator) => {
+            const paddedCells = row.map((cell, i) => (cell || '').padEnd(colWidths[i]));
+            return `${separator} ${paddedCells.join(` ${separator} `)} ${separator}`;
+        };
+        const createSeparator = (left, middle, right, line) => {
+            const parts = colWidths.map(width => line.repeat(width + 2));
+            return `${left}${parts.join(middle)}${right}`;
+        };
+        const topBorder = createSeparator('┌', '┬', '┐', '─');
+        const headerSeparator = createSeparator('├', '┼', '┤', '─');
+        const bottomBorder = createSeparator('└', '┴', '┘', '─');
+        const asciiRows = [];
+        asciiRows.push(topBorder);
+        asciiRows.push(formatRow(headerStrings, '│'));
+        asciiRows.push(headerSeparator);
+        dataRowsStrings.forEach(row => {
+            asciiRows.push(formatRow(row, '│'));
+        });
+        asciiRows.push(bottomBorder);
+        const asciiTableString = asciiRows.join('\n');
+        const accumulator = [];
+        for (const block of slack_1.section(`\`\`\`\n${asciiTableString}\n\`\`\``)) {
+            accumulator.push(block);
+        }
+        return accumulator;
+    };
+    // --- NEW LOGIC FOR extractTables: 'list' ---
+    if (options.extractTables === 'list') {
+        const listSections = [];
+        const headerElements = headerRichTextCells; // Already parsed
+        element.rows.forEach(row => {
+            const rowElements = parseTableRow(row, options);
+            const currentRowCombinedElements = [];
+            for (let i = 0; i < numCols; i++) {
+                const headerCellContent = headerElements[i] || [];
+                const dataCellContent = rowElements[i] || [];
+                // Make header bold
+                const boldHeaderElements = headerCellContent.map(el => ({
+                    ...el,
+                    style: { ...('style' in el ? el.style : {}), bold: true },
+                }));
+                currentRowCombinedElements.push(...boldHeaderElements);
+                currentRowCombinedElements.push({ type: 'text', text: ': ' });
+                currentRowCombinedElements.push(...dataCellContent);
+                // Add newline if not the last cell
+                if (i < numCols - 1) {
+                    currentRowCombinedElements.push({ type: 'text', text: '\n' });
+                }
+            }
+            // Only add row section if it has content
+            if (currentRowCombinedElements.length > 0) {
+                listSections.push(slack_1.richTextSection(currentRowCombinedElements));
+            }
+        });
+        // Only create list if there are sections
+        if (listSections.length > 0) {
+            const listElement = slack_1.richTextList(listSections, 'bullet', 0);
+            return { type: 'richTextList', value: [listElement] };
+        }
+        else {
+            // Return empty blocks if no list sections were generated
+            return { type: 'blocks', value: [] };
+        }
+    }
+    // --- END NEW LOGIC ---
+    if (options.extractTables === true) { // Check for boolean true
+        return { type: 'tableArray', value: parseRowsToStringArray() }; // Return structured type
+    }
+    else {
+        // Default to ASCII table if extractTables is false or undefined
+        return { type: 'blocks', value: parseRowsToAsciiTable() }; // Return structured type
+    }
 }
 function parseBlockquote(element, options) {
     return element.tokens
@@ -362,34 +498,62 @@ function parseHTML(element) {
 function parseToken(token, options) {
     switch (token.type) {
         case 'heading':
-            return [parseHeading(token)];
+            return {
+                type: 'blocks',
+                value: [parseHeading(token)],
+            };
         case 'paragraph':
-            return parseParagraph(token, options);
+            return {
+                type: 'blocks',
+                value: parseParagraph(token, options),
+            };
         case 'code':
-            return parseCode(token);
+            return { type: 'blocks', value: parseCode(token) };
         case 'blockquote':
-            return parseBlockquote(token, options);
+            return {
+                type: 'blocks',
+                value: parseBlockquote(token, options),
+            };
         case 'list':
-            return parseList(token, options);
-        case 'table':
-            return parseTable(token, options);
+            return {
+                type: 'richtext',
+                value: parseList(token, options),
+            };
+        case 'table': {
+            const parsed = parseTable(token, options);
+            switch (parsed.type) {
+                case 'blocks':
+                    return { type: 'blocks', value: parsed.value };
+                case 'tableArray':
+                    return { type: 'tableArray', value: parsed.value };
+                case 'richTextList':
+                    // Return the specific type for tables converted to lists
+                    return { type: 'tableAsRichTextList', value: parsed.value };
+                default:
+                    return { type: 'blocks', value: [] };
+            }
+        }
         case 'hr':
-            return [parseThematicBreak()];
+            return { type: 'blocks', value: [parseThematicBreak()] };
         case 'html':
-            return parseHTML(token);
+            return { type: 'blocks', value: parseHTML(token) };
         case 'image':
-            return [
-                slack_1.image(token.href, token.text || token.title || token.href, token.title || undefined),
-            ];
+            return {
+                type: 'blocks',
+                value: [
+                    slack_1.image(token.href, token.text || token.title || token.href, token.title || undefined),
+                ],
+            };
         case 'space':
-            return [];
+            return { type: 'blocks', value: [] }; // Represent no-op clearly
         default:
             console.warn('Unhandled token type:', token.type);
-            return [];
+            return { type: 'blocks', value: [] }; // Represent no-op clearly
     }
 }
 function parseBlocks(tokens, options = {}) {
     const resultBlocks = [];
+    const extractedTables = [];
     let currentRichTextElements = [];
     function finalizeRichText() {
         if (currentRichTextElements.length > 0) {
@@ -399,26 +563,41 @@ function parseBlocks(tokens, options = {}) {
     }
     for (const token of tokens) {
         const parsed = parseToken(token, options);
-        if (parsed.length > 0) {
-            const firstElement = parsed[0];
-            if ('type' in firstElement &&
-                (firstElement.type === 'rich_text_section' ||
-                    firstElement.type === 'rich_text_list' ||
-                    firstElement.type === 'rich_text_preformatted' ||
-                    firstElement.type === 'rich_text_quote')) {
-                currentRichTextElements.push(...parsed);
-            }
-            else {
-                finalizeRichText();
-                resultBlocks.push(...parsed);
-            }
+        switch (parsed.type) {
+            case 'blocks':
+                if (parsed.value.length > 0) {
+                    finalizeRichText();
+                    resultBlocks.push(...parsed.value);
+                }
+                break;
+            case 'richtext': // Handles regular rich text (e.g., from standard lists)
+                if (parsed.value.length > 0) {
+                    currentRichTextElements.push(...parsed.value);
+                }
+                break;
+            case 'tableArray':
+                if (parsed.value.length > 0) {
+                    finalizeRichText();
+                    extractedTables.push(parsed.value);
+                }
+                break;
+            case 'tableAsRichTextList': // Handles the specific table-list conversion
+                if (parsed.value.length > 0) {
+                    finalizeRichText(); // Finalize any pending standard rich text
+                    // The value should already be the single rich_text_list element
+                    resultBlocks.push(slack_1.richText(parsed.value)); // Wrap it in a richText block
+                }
+                break;
         }
-        else if (token.type === 'space' && currentRichTextElements.length > 0) {
+        if (token.type === 'space') {
             finalizeRichText();
         }
     }
     finalizeRichText();
-    return resultBlocks;
+    return {
+        blocks: resultBlocks,
+        tables: extractedTables.length > 0 ? extractedTables : undefined,
+    };
 }
 exports.parseBlocks = parseBlocks;
 //# sourceMappingURL=internal.js.map

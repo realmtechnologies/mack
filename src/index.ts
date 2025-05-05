@@ -1,6 +1,5 @@
-import type {KnownBlock} from '@slack/types';
 import {parseBlocks} from './parser/internal';
-import type {ParsingOptions} from './types';
+import type {ParsingOptions, MarkdownToBlocksResult} from './types';
 import {marked} from 'marked';
 
 /**
@@ -23,7 +22,7 @@ import {marked} from 'marked';
 export async function markdownToBlocks(
   body: string,
   options: ParsingOptions = {}
-): Promise<KnownBlock[]> {
+): Promise<MarkdownToBlocksResult> {
   const lexer = new marked.Lexer();
   lexer.options.tokenizer = new marked.Tokenizer();
   const tokens = lexer.lex(body);

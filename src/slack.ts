@@ -15,9 +15,14 @@ const MAX_HEADER_LENGTH = 150;
 const MAX_IMAGE_TITLE_LENGTH = 2000;
 const MAX_IMAGE_ALT_TEXT_LENGTH = 2000;
 
-export function section(text: string): SectionBlock[] {
+export function section(
+  text: string,
+  {splitParagraphs = false}: {splitParagraphs?: boolean} = {}
+): SectionBlock[] {
   const blocks: SectionBlock[] = [];
-  const paragraphs = text.split(/\n{2,}/).filter(p => p.length > 0);
+  const paragraphs = splitParagraphs
+    ? text.split(/\n{2,}/).filter(p => p.length > 0)
+    : [text];
 
   for (const paragraph of paragraphs) {
     let remainingText = paragraph;

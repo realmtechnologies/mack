@@ -5,9 +5,11 @@ const MAX_TEXT_LENGTH = 3000;
 const MAX_HEADER_LENGTH = 150;
 const MAX_IMAGE_TITLE_LENGTH = 2000;
 const MAX_IMAGE_ALT_TEXT_LENGTH = 2000;
-function section(text) {
+function section(text, { splitParagraphs = false } = {}) {
     const blocks = [];
-    const paragraphs = text.split(/\n{2,}/).filter(p => p.length > 0);
+    const paragraphs = splitParagraphs
+        ? text.split(/\n{2,}/).filter(p => p.length > 0)
+        : [text];
     for (const paragraph of paragraphs) {
         let remainingText = paragraph;
         while (remainingText.length > 0) {

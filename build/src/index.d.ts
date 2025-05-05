@@ -1,5 +1,4 @@
-import type { KnownBlock } from '@slack/types';
-import type { ParsingOptions } from './types';
+import type { ParsingOptions, MarkdownToBlocksResult } from './types';
 /**
  * Parses Markdown content into Slack BlockKit Blocks.
  * - Supports headings (all Markdown heading levels are treated as the single Slack header block)
@@ -17,4 +16,4 @@ import type { ParsingOptions } from './types';
  * @param body any Markdown or GFM content
  * @param options options to configure the parser
  */
-export declare function markdownToBlocks(body: string, options?: ParsingOptions): Promise<KnownBlock[]>;
+export declare function markdownToBlocks(body: string, options?: ParsingOptions): Promise<MarkdownToBlocksResult>;

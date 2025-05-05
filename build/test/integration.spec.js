@@ -46,12 +46,12 @@ a **b** _c_ **_d_ e**
 - [ ] checkbox false
 - [x] checkbox true
 
-| Syntax      | Description |
-| ----------- | ----------- |
-| Header      | Title       |
-| Paragraph   | Text        |
+| Syntax      | Description | Test Col |
+| ----------- | ----------- | -------- |
+| Header      | Title       | Test 1   |
+| Paragraph   | Text        | Test 2   |
 `;
-        const actual = await src_1.markdownToBlocks(text);
+        const result = await src_1.markdownToBlocks(text);
         const expected = [
             slack.section('a *b* _c_ *_d_ e*'),
             slack.header('heading a'),
@@ -89,20 +89,22 @@ a **b** _c_ **_d_ e**
                     slack.richTextSection([{ type: 'text', text: 'checkbox true' }]),
                 ], 'bullet', 0),
             ]),
-            slack.section('```\n' +
-                '| Syntax | Description |\n' +
-                '| --- | --- |\n' +
-                '| Header | Title |\n' +
-                '| Paragraph | Text |\n' +
-                '```'),
+            slack.section(`\`\`\`
+┌───────────┬─────────────┬──────────┐
+│ Syntax    │ Description │ Test Col │
+├───────────┼─────────────┼──────────┤
+│ Header    │ Title       │ Test 1   │
+│ Paragraph │ Text        │ Test 2   │
+└───────────┴─────────────┴──────────┘
+\`\`\``),
         ].flat();
-        expect(actual).toStrictEqual(expected);
+        expect(result.blocks).toStrictEqual(expected);
     });
     it('should parse long markdown', async () => {
         const text = new Array(3500).fill('a').join('') + 'bbbcccdddeee';
-        const actual = await src_1.markdownToBlocks(text);
+        const result = await src_1.markdownToBlocks(text);
         const expected = slack.section(text);
-        expect(actual).toStrictEqual(expected);
+        expect(result.blocks).toStrictEqual(expected);
     });
     describe('code blocks', () => {
         it('should parse code blocks with no language', async () => {
@@ -113,7 +115,7 @@ if (a === 'hi') {
   console.log('hello')
 }
 \`\`\``;
-            const actual = await src_1.markdownToBlocks(text);
+            const result = await src_1.markdownToBlocks(text);
             const expected = slack.section(`\`\`\`
 if (a === 'hi') {
   console.log('hi!')
@@ -121,7 +123,7 @@ if (a === 'hi') {
   console.log('hello')
 }
 \`\`\``);
-            expect(actual).toStrictEqual(expected);
+            expect(result.blocks).toStrictEqual(expected);
         });
         it('should parse code blocks with language', async () => {
             const text = `\`\`\`javascript
@@ -131,7 +133,7 @@ if (a === 'hi') {
   console.log('hello')
 }
 \`\`\``;
-            const actual = await src_1.markdownToBlocks(text);
+            const result = await src_1.markdownToBlocks(text);
             const expected = slack.section(`\`\`\`
 if (a === 'hi') {
   console.log('hi!')
@@ -139,13 +141,13 @@ if (a === 'hi') {
   console.log('hello')
 }
 \`\`\``);
-            expect(actual).toStrictEqual(expected);
+            expect(result.blocks).toStrictEqual(expected);
         });
     });
     it('should correctly escape text', async () => {
-        const actual = await src_1.markdownToBlocks('<>&\'""\'&><', { escapeSlack: true });
+        const result = await src_1.markdownToBlocks('<>&\'""\'&><', { escapeSlack: true });
         const expected = slack.section('&lt;&gt;&amp;\'""\'&amp;&gt;&lt;');
-        expect(actual).toStrictEqual(expected);
+        expect(result.blocks).toStrictEqual(expected);
     });
 });
 //# sourceMappingURL=integration.spec.js.map
