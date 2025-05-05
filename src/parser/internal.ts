@@ -462,7 +462,7 @@ function richTextElementsToString(
 type ParsedTableResult =
   | {type: 'blocks'; value: KnownBlock[]}
   | {type: 'tableArray'; value: string[][]}
-  | {type: 'richTextList'; value: RichTextBlockElement[]};
+  | {type: 'tableCellsAsRichTextSections'; value: RichTextSection[]};
 
 function parseTable(
   element: marked.Tokens.Table,
@@ -584,42 +584,29 @@ function parseTable(
 
   // --- NEW LOGIC FOR extractTables: 'list' ---
   if (options.extractTables === 'list') {
-    const listSections: RichTextSection[] = [];
+    const allCellSections: RichTextSection[] = [];
     const headerElements = headerRichTextCells; // Already parsed
 
-    element.rows.forEach(row => {
-      const rowElements = parseTableRow(row, options);
-      const currentRowCombinedElements: SlackRichTextContentElement[] = [];
-
-      for (let i = 0; i < numCols; i++) {
-        const headerCellContent = headerElements[i] || [];
-        const dataCellContent = rowElements[i] || [];
-
-        // Make header bold
-        const boldHeaderElements = headerCellContent.map(el => ({
-          ...el,
-          style: {...('style' in el ? el.style : {}), bold: true},
-        }));
-
-        currentRowCombinedElements.push(...boldHeaderElements);
-        currentRowCombinedElements.push({type: 'text', text: ': '});
-        currentRowCombinedElements.push(...dataCellContent);
-
-        // Add newline if not the last cell
-        if (i < numCols - 1) {
-          currentRowCombinedElements.push({type: 'text', text: '\n'});
-        }
-      }
-      // Only add row section if it has content
-      if (currentRowCombinedElements.length > 0) {
-        listSections.push(richTextSection(currentRowCombinedElements));
+    // Add header cell sections
+    headerElements.forEach(cellContent => {
+      if (cellContent.length > 0) { // Don't add empty sections
+        allCellSections.push(richTextSection(cellContent));
       }
     });
 
+    // Add data cell sections
+    element.rows.forEach(row => {
+      const rowCellElements = parseTableRow(row, options);
+      rowCellElements.forEach(cellContent => {
+        if (cellContent.length > 0) { // Don't add empty sections
+          allCellSections.push(richTextSection(cellContent));
+        }
+      });
+    });
+
     // Only create list if there are sections
-    if (listSections.length > 0) {
-      const listElement = richTextList(listSections, 'bullet', 0);
-      return {type: 'richTextList', value: [listElement]};
+    if (allCellSections.length > 0) {
+      return {type: 'tableCellsAsRichTextSections', value: allCellSections};
     } else {
       // Return empty blocks if no list sections were generated
       return {type: 'blocks', value: []};
@@ -680,7 +667,7 @@ type StructuredTokenParseResult =
   | {type: 'blocks'; value: KnownBlock[]}
   | {type: 'richtext'; value: RichTextBlockElement[]}
   | {type: 'tableArray'; value: string[][]}
-  | {type: 'tableAsRichTextList'; value: RichTextBlockElement[]}; // New type
+  | {type: 'tableCellsAsRichTextSections'; value: RichTextSection[]};
 
 function parseToken(
   token: marked.Token,
@@ -721,9 +708,8 @@ function parseToken(
           return {type: 'blocks', value: parsed.value};
         case 'tableArray':
           return {type: 'tableArray', value: parsed.value};
-        case 'richTextList':
-          // Return the specific type for tables converted to lists
-          return {type: 'tableAsRichTextList', value: parsed.value};
+        case 'tableCellsAsRichTextSections':
+          return {type: 'tableCellsAsRichTextSections', value: parsed.value};
         default:
           return {type: 'blocks', value: []};
       }
@@ -776,7 +762,7 @@ export function parseBlocks(
     | {type: 'blocks'; value: KnownBlock[]}
     | {type: 'richtext'; value: RichTextBlockElement[]}
     | {type: 'tableArray'; value: string[][]}
-    | {type: 'tableAsRichTextList'; value: RichTextBlockElement[]};
+    | {type: 'tableCellsAsRichTextSections'; value: RichTextSection[]};
 
   for (const token of tokens) {
     const parsed: StructuredTokenParseResult = parseToken(token, options);
@@ -799,11 +785,13 @@ export function parseBlocks(
           extractedTables.push(parsed.value);
         }
         break;
-      case 'tableAsRichTextList': // Handles the specific table-list conversion
+      case 'tableCellsAsRichTextSections': // Handle the new type for table-list conversion
         if (parsed.value.length > 0) {
           finalizeRichText(); // Finalize any pending standard rich text
-          // The value should already be the single rich_text_list element
-          resultBlocks.push(richText(parsed.value)); // Wrap it in a richText block
+          // The value is an array of RichTextSection elements.
+          // Wrap these sections in a rich_text_list, then in a rich_text block.
+          const listElement = richTextList(parsed.value, 'bullet', 0);
+          resultBlocks.push(richText([listElement]));
         }
         break;
     }

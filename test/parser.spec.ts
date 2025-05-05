@@ -645,46 +645,62 @@ describe('table parsing', () => {
             style: 'bullet',
             indent: 0,
             elements: [
+              // Header Cells
               {
                 type: 'rich_text_section',
                 elements: [
-                  {type: 'text', text: 'Item', style: {bold: true}},
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: 'Apples'},
-                  {type: 'text', text: '\n'}, // Newline between cells
-                  {type: 'text', text: 'Qty', style: {bold: true}},
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '5'},
-                  {type: 'text', text: '\n'}, // Newline between cells
-                  {type: 'text', text: 'Price ', style: {bold: true}},
-                  {
-                    type: 'text',
-                    text: 'each',
-                    style: {bold: true, italic: true},
-                  }, // Handling markdown within header
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '€1.50'},
+                  {type: 'text', text: 'Item'},
                 ],
               },
               {
                 type: 'rich_text_section',
                 elements: [
-                  {type: 'text', text: 'Item', style: {bold: true}},
-                  {type: 'text', text: ': '},
+                  {type: 'text', text: 'Qty'},
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Price '},
+                  {type: 'text', text: 'each', style: {italic: true}},
+                ],
+              },
+              // Row 1 Cells
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: 'Apples'},
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: '5'},
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: '€1.50'},
+                ],
+              },
+              // Row 2 Cells
+              {
+                type: 'rich_text_section',
+                elements: [
                   {type: 'text', text: 'Oranges'},
-                  {type: 'text', text: '\n'},
-                  {type: 'text', text: 'Qty', style: {bold: true}},
-                  {type: 'text', text: ': '},
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
                   {type: 'text', text: '12'},
-                  {type: 'text', text: '\n'},
-                  {type: 'text', text: 'Price ', style: {bold: true}},
-                  {
-                    type: 'text',
-                    text: 'each',
-                    style: {bold: true, italic: true},
-                  },
-                  {type: 'text', text: ': '},
-                  {type: 'text', text: '€1.00', style: {strike: true}}, // Handling markdown within cell
+                ],
+              },
+              {
+                type: 'rich_text_section',
+                elements: [
+                  {type: 'text', text: '€1.00', style: {strike: true}},
                   {type: 'text', text: ' €0.80'},
                 ],
               },
